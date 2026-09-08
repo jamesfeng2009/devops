@@ -6,6 +6,7 @@ resources:
   - ../../base
   - certificate.yaml
   - sealed-secret.yaml
+  - sealed-backup-r2.yaml
   - postgres-backup.yaml
 patches:
   - path: patches.yaml

@@ -1,9 +1,10 @@
 # PostgreSQL 业务数据每日备份（P0：local-path PVC 无快照能力，节点丢失=数据归零）
-# 链路：pg_dump -Fc（集群内 postgres Service）→ rclone 推 Cloudflare R2（S3 兼容）→ 远端保留 30 天
-# 凭据：R2 密钥来自 Secret backup-r2（明文源 secrets/backup-r2-secret.yaml，gitignore）；
-#       DB 凭据复用 tripjournal-secrets（POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB）
+# 链路：pg_dump -Fc（集群内 postgres Service）→ Cloudflare REST API PUT 到独立桶 devops-backup/pg/ → 保留 30 天
+# 隔离：备份使用独立桶 devops-backup（与爬虫桶 novelcomics 完全分开），30 天过期由脚本按文件名日期清理
+# 凭据：R2_ACCOUNT_ID / R2_BEARER_TOKEN / R2_BUCKET 来自 Secret backup-r2（明文源 secrets/backup-r2-secret.yaml，gitignore）
+#       Bearer Token 复用 novelComics 项目的 R2 API Token（REST API 方案，无需 S3 密钥/rclone）
+# DB 凭据：复用 tripjournal-secrets（POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB）
 # 时区：CronJob 按 UTC 调度，21:00 UTC = 次日 05:00 北京时间（低峰窗口）
-# 注意：镜像复用节点已缓存的 postgres:16-alpine；rclone 运行时从 USTC 镜像源安装（约 3s）
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -50,48 +51,45 @@ spec:
                     secretKeyRef:
                       name: backup-r2
                       key: R2_ACCOUNT_ID
-                - name: R2_ACCESS_KEY_ID
+                - name: R2_BEARER_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: backup-r2
-                      key: R2_ACCESS_KEY_ID
-                - name: R2_SECRET_ACCESS_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: backup-r2
-                      key: R2_SECRET_ACCESS_KEY
+                      key: R2_BEARER_TOKEN
                 - name: R2_BUCKET
                   valueFrom:
                     secretKeyRef:
                       name: backup-r2
                       key: R2_BUCKET
-                - name: RCLONE_CONFIG_R2_TYPE
-                  value: s3
-                - name: RCLONE_CONFIG_R2_PROVIDER
-                  value: Cloudflare
-                - name: RCLONE_CONFIG_R2_ENDPOINT
-                  value: "https://$(R2_ACCOUNT_ID).r2.cloudflarestorage.com"
-                - name: RCLONE_CONFIG_R2_ACCESS_KEY_ID
-                  value: "$(R2_ACCESS_KEY_ID)"
-                - name: RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
-                  value: "$(R2_SECRET_ACCESS_KEY)"
               command: ["/bin/sh", "-c"]
               args:
                 - |
                   set -e
-                  # CN 网络：apk 走 USTC 镜像源安装 rclone
+                  export R2_API="https://api.cloudflare.com/client/v4/accounts/${R2_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects"
+                  AUTH="Authorization: Bearer ${R2_BEARER_TOKEN}"
+                  # CN 网络：apk 走 USTC 镜像源安装 curl/jq
                   sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/' /etc/apk/repositories
-                  apk add --no-cache --quiet rclone
+                  apk add --no-cache --quiet curl jq
                   STAMP=$(date +%Y%m%d-%H%M)
                   DUMP=/tmp/trip_ledger-${STAMP}.dump
+                  KEY="pg/trip_ledger-${STAMP}.dump"
                   echo "[backup] pg_dump ${POSTGRES_DB} -> ${DUMP}"
                   pg_dump -h postgres.tripjournal.svc.cluster.local -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -Fc -f "${DUMP}"
                   ls -lh "${DUMP}"
-                  echo "[backup] rclone -> R2:${R2_BUCKET}/pg/"
-                  rclone copy "${DUMP}" "R2:${R2_BUCKET}/pg/"
-                  # 远端保留 30 天
-                  rclone delete --min-age 30d "R2:${R2_BUCKET}/pg/" || true
-                  echo "[backup] done: $(rclone lsl "R2:${R2_BUCKET}/pg/" | head -3)"
+                  echo "[backup] upload -> R2 devops-backup/${KEY}"
+                  RESP=$(curl -sf -X PUT -H "$AUTH" --data-binary @"${DUMP}" "${R2_API}/${KEY}")
+                  echo "${RESP}" | jq -r '"[backup] upload result: \(.result.key) \(.result.size) bytes"'
+                  # 保留 30 天：按文件名日期（pg/trip_ledger-YYYYMMDD-HHMM.dump）清理过期对象
+                  CUTOFF=$(date -d '30 days ago' +%Y%m%d)
+                  curl -sf -H "$AUTH" "${R2_API}?prefix=pg/&per_page=100" \
+                    | jq -r '.result[]?.key' \
+                    | while read -r k; do
+                        d=$(echo "$k" | grep -o '[0-9]\{8\}' | head -1)
+                        if [ -n "$d" ] && [ "$d" -lt "$CUTOFF" ]; then
+                          curl -sf -X DELETE -H "$AUTH" "${R2_API}/${k}" && echo "[backup] expired deleted: $k"
+                        fi
+                      done
+                  echo "[backup] done"
               resources:
                 requests:
                   cpu: 100m
