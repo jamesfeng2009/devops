@@ -38,8 +38,10 @@ data:
             if token and not hmac.compare_digest(token.encode(), GITEE_SECRET):
                 print(f"reject: header token mismatch (got {token[:4]}/len{len(token)})", flush=True)
                 self.send_response(401); self.end_headers(); return
-            event = self.headers.get("X-Gitee-Event", "")
-            if event not in ("push", "repo_push"):
+            event = (self.headers.get("X-Gitee-Event") or "").lower()
+            # Gitee 实际发送 "Push Hook"（大小写混合带空格），按包含 push 兼容匹配
+            if "push" not in event:
+                print(f"ignore event: {self.headers.get('X-Gitee-Event')!r}", flush=True)
                 self.send_response(200); self.end_headers(); return
             try:
                 p = json.loads(body)
