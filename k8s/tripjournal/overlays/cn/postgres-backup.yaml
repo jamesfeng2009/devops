@@ -80,7 +80,8 @@ spec:
                   RESP=$(curl -sf -X PUT -H "$AUTH" --data-binary @"${DUMP}" "${R2_API}/${KEY}")
                   echo "${RESP}" | jq -r '"[backup] upload result: \(.result.key) \(.result.size) bytes"'
                   # 保留 30 天：按文件名日期（pg/trip_ledger-YYYYMMDD-HHMM.dump）清理过期对象
-                  CUTOFF=$(date -d '30 days ago' +%Y%m%d)
+                  # 注意：alpine busybox date 不支持 -d '30 days ago'，用 epoch 运算
+                  CUTOFF=$(date -u -d @$(($(date +%s) - 2592000)) +%Y%m%d)
                   curl -sf -H "$AUTH" "${R2_API}?prefix=pg/&per_page=100" \
                     | jq -r '.result[]?.key' \
                     | while read -r k; do
