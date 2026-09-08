@@ -38,12 +38,22 @@
         executable: /bin/bash
 
     # 注意：SQLite 后端不支持 --etcd-snapshot（仅 etcd 生效），改用 sqlite3 .backup 定时备份
-    - name: Install sqlite3 for backup
+    - name: Install sqlite3 and rclone for backup/offsite push
       ansible.builtin.apt:
-        name: sqlite3
+        name:
+          - sqlite3
+          - rclone
         state: present
 
-    - name: Install SQLite backup script (keeps last 10, every 6h)
+    # 异地容灾：快照推 Cloudflare R2（凭据文件 secrets/rclone.conf，gitignore 不入库）
+    - name: Deploy rclone config for R2 offsite backup
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../secrets/rclone.conf"
+        dest: /root/.rclone.conf
+        mode: "0600"
+      no_log: true
+
+    - name: Install SQLite backup script (local 10 + R2 offsite 30d, every 6h)
       ansible.builtin.copy:
         dest: "{{ item.dest }}"
         mode: "{{ item.mode }}"
@@ -59,6 +69,14 @@
             KEEP=10
             sqlite3 "$DB" ".backup $DIR/state-$(date +%Y%m%d-%H%M%S).db"
             ls -1t $DIR/state-*.db | tail -n +$((KEEP+1)) | xargs -r rm -f
+            # 异地推送（R2）。失败不阻断本地备份，仅告警，下次 timer 重试
+            LATEST=$(ls -1t $DIR/state-*.db | head -1)
+            if rclone copy "$LATEST" R2:devops-backup/k3s-state/ --config /root/.rclone.conf 2>/tmp/rclone-err.log; then
+              rclone delete --min-age 30d R2:devops-backup/k3s-state/ --config /root/.rclone.conf || true
+              echo "$(date '+%F %T') offsite OK: $LATEST" >> /var/log/k3s-sqlite-backup.log
+            else
+              echo "$(date '+%F %T') offsite FAILED: $(cat /tmp/rclone-err.log)" >> /var/log/k3s-sqlite-backup.log
+            fi
         - dest: /etc/systemd/system/k3s-sqlite-backup.service
           mode: "0644"
           content: |

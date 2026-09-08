@@ -1,0 +1,101 @@
+# PostgreSQL 业务数据每日备份（P0：local-path PVC 无快照能力，节点丢失=数据归零）
+# 链路：pg_dump -Fc（集群内 postgres Service）→ rclone 推 Cloudflare R2（S3 兼容）→ 远端保留 30 天
+# 凭据：R2 密钥来自 Secret backup-r2（明文源 secrets/backup-r2-secret.yaml，gitignore）；
+#       DB 凭据复用 tripjournal-secrets（POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB）
+# 时区：CronJob 按 UTC 调度，21:00 UTC = 次日 05:00 北京时间（低峰窗口）
+# 注意：镜像复用节点已缓存的 postgres:16-alpine；rclone 运行时从 USTC 镜像源安装（约 3s）
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  schedule: "0 21 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            cloud: tencent
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: tripjournal-secrets
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: tripjournal-secrets
+                      key: POSTGRES_PASSWORD
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: tripjournal-secrets
+                      key: POSTGRES_DB
+                - name: R2_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-r2
+                      key: R2_ACCOUNT_ID
+                - name: R2_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-r2
+                      key: R2_ACCESS_KEY_ID
+                - name: R2_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-r2
+                      key: R2_SECRET_ACCESS_KEY
+                - name: R2_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-r2
+                      key: R2_BUCKET
+                - name: RCLONE_CONFIG_R2_TYPE
+                  value: s3
+                - name: RCLONE_CONFIG_R2_PROVIDER
+                  value: Cloudflare
+                - name: RCLONE_CONFIG_R2_ENDPOINT
+                  value: "https://$(R2_ACCOUNT_ID).r2.cloudflarestorage.com"
+                - name: RCLONE_CONFIG_R2_ACCESS_KEY_ID
+                  value: "$(R2_ACCESS_KEY_ID)"
+                - name: RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+                  value: "$(R2_SECRET_ACCESS_KEY)"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  # CN 网络：apk 走 USTC 镜像源安装 rclone
+                  sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/' /etc/apk/repositories
+                  apk add --no-cache --quiet rclone
+                  STAMP=$(date +%Y%m%d-%H%M)
+                  DUMP=/tmp/trip_ledger-${STAMP}.dump
+                  echo "[backup] pg_dump ${POSTGRES_DB} -> ${DUMP}"
+                  pg_dump -h postgres.tripjournal.svc.cluster.local -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -Fc -f "${DUMP}"
+                  ls -lh "${DUMP}"
+                  echo "[backup] rclone -> R2:${R2_BUCKET}/pg/"
+                  rclone copy "${DUMP}" "R2:${R2_BUCKET}/pg/"
+                  # 远端保留 30 天
+                  rclone delete --min-age 30d "R2:${R2_BUCKET}/pg/" || true
+                  echo "[backup] done: $(rclone lsl "R2:${R2_BUCKET}/pg/" | head -3)"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
