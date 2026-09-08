@@ -1,0 +1,23 @@
+# 平台应用：app-of-apps（自管理 k8s/apps 目录，含本 Application 自身）
+# 源：Gitee 私有镜像仓（主源，与控制面解耦）；jdcloud git daemon（git://172.16.0.3）保留为备用连接
+# ArgoCD 入口为 NodePort 30443 TLS 直连 IP（helm values 管理），域名 Ingress 已下线
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-apps
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitee.com/jamesfeng_2009/devops.git
+    targetRevision: main
+    path: k8s/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

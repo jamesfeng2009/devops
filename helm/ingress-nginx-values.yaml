@@ -1,0 +1,29 @@
+# Ingress-Nginx 国内业务入口（腾讯云 Worker hostNetwork 直连 80/443）
+controller:
+  hostNetwork: true
+  hostPort:
+    enabled: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeSelector:
+    cloud: tencent
+  # 关闭 admission webhook：省去 certgen job 镜像依赖（registry.k8s.io 国内拉取不稳）
+  admissionWebhooks:
+    enabled: false
+  # hostNetwork 直连节点 80/443，无需 Service 转发
+  service:
+    enabled: false
+  ingressClassResource:
+    default: true
+  # hostNetwork 单副本：滚动更新时新旧 Pod 抢占 80/443 端口会死锁，必须 Recreate
+  updateStrategy:
+    type: Recreate
+  # 节点 InternalIP 注册为公网 IP（腾讯云 1:1 NAT），kubelet 默认按 PodIP 探测会走
+  # NAT hairpin 被阻断导致超时→CrashLoopBackOff。hostNetwork 下显式指定 127.0.0.1 直探本机。
+  livenessProbe:
+    host: 127.0.0.1
+    initialDelaySeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    host: 127.0.0.1
+    initialDelaySeconds: 10
+    timeoutSeconds: 5

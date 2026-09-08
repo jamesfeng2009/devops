@@ -1,0 +1,48 @@
+# TripJournal 官网（Astro SSG 静态产物，宿主机目录只读挂载）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tripjournal-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tripjournal-web
+  template:
+    metadata:
+      labels:
+        app: tripjournal-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: site
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: site
+          hostPath:
+            path: /var/www/tripjournal-site
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tripjournal-web
+spec:
+  selector:
+    app: tripjournal-web
+  ports:
+    - port: 80
+      targetPort: 80

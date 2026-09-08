@@ -1,0 +1,23 @@
+# 敏感凭据，禁止入库
+.env
+secrets/
+*.local
+*.vault
+
+# 备份产物（镜像 tar / pg_dump / 静态站快照）
+backups/
+
+# K8s 凭据
+kubeconfig
+*.kubeconfig
+k3s.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform.lock.hcl
+
+# 系统文件
+.DS_Store

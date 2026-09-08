@@ -1,0 +1,49 @@
+# Traefik 海外测试入口（法兰克福 Worker，hostPort 直连 80/443）
+# 与国内 Ingress-Nginx 并存：nginx 为 default class（国内业务），traefik 需业务显式指定 ingressClassName
+deployment:
+  kind: Deployment
+  replicas: 1
+
+# hostNetwork 单副本：RollingUpdate 会因旧 Pod 占 80/443 端口导致新 Pod 无法调度（死锁），必须 Recreate
+# （chart 的键是顶层 updateStrategy，与 ingress-nginx chart 相同）
+updateStrategy:
+  type: Recreate
+
+# hostNetwork 直连节点 80/443，海外节点无端口抢占历史，直接生效
+hostNetwork: true
+
+service:
+  enabled: false
+
+ingressClass:
+  enabled: true
+  # 国内 nginx 保持 default，避免海外路由抢占国内业务
+  isDefaultClass: false
+
+ports:
+  web:
+    port: 80
+    hostPort: 80
+  websecure:
+    port: 443
+    hostPort: 443
+
+# 仅调度法兰克福，海外测试组件绝不回流国内
+nodeSelector:
+  region: eu
+
+# hostNetwork 非 root 用户绑 80/443 必须授予 NET_BIND_SERVICE（chart 默认 drop ALL 且未加回）
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+    add: [NET_BIND_SERVICE]
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

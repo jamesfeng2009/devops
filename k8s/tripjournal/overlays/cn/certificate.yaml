@@ -1,0 +1,13 @@
+# tripbill.cn 证书（cert-manager 自动签发 + 自动续期，Let's Encrypt 生产）
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tripbill-cn
+  namespace: tripjournal
+spec:
+  secretName: tripbill-cn-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - tripbill.cn

@@ -1,0 +1,31 @@
+# Let's Encrypt 签发器：staging 用于首次验证（额度宽松），prod 用于正式证书
+# HTTP-01 challenge 走 Ingress-Nginx（国内腾讯云 80 端口，LE 服务器可直连）
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: jamesfeng2009@163.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: jamesfeng2009@163.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

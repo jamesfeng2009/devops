@@ -1,0 +1,26 @@
+# tripbill.cn 业务入口（路由规则环境无关；入口类与 TLS 由 overlay 注入）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tripjournal
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+spec:
+  rules:
+    - host: tripbill.cn
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: trip-ledger-api
+                port:
+                  number: 3000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tripjournal-web
+                port:
+                  number: 80

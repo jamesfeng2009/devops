@@ -1,0 +1,81 @@
+# ArgoCD GitOps 控制面（京东云 Server 节点，显式容忍控制面污点）
+# 资源红线：全组件 limit 合计 ≤1.5Gi（当前 1.15Gi：controller 512M + server 256M + repo 256M + redis 128M）
+global:
+  domain: 124.221.136.117:30443
+  nodeSelector:
+    cloud: jdcloud
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+configs:
+  repositories:
+    # 京东云 git daemon 裸仓库（repo-server 与 git daemon 同节点，走私网 IP）
+    devops:
+      url: git://172.16.0.3/devops.git
+  params:
+    # TLS 模式：server 自签证书（argocd-secret/argocd-server-tls），UI 走 https://124.221.136.117:30443
+    # 30080 HTTP 保留仅作 301 跳转，凭据不再明文传输；集群内 webhook 走 https + 跳过自签校验
+    server.insecure: false
+  cm:
+    # 入口：腾讯云 Worker NodePort TLS 直连（域名 tripbill.cn 系留给小程序业务，ArgoCD 不占用）
+    url: https://124.221.136.117:30443
+    # Git 轮询周期（默认 180s，学习环境调快便于演示闭环）
+    timeout.reconciliation: 60s
+  secret:
+    # bcrypt 哈希可入库（单向不可逆），明文在 secrets/credentials.local
+    argocdServerAdminPassword: "$2y$10$X8witpOh/deXdnG6HSRWz.GXH6K5GoZCX97iSZgydQ1K3koqQxtRq"
+
+# 单副本 + 关闭非核心组件
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+server:
+  replicas: 1
+  # 入口改为 NodePort 直连 IP（TripJournal Ingress 由 Git 侧管理）
+  ingress:
+    enabled: false
+  service:
+    type: NodePort
+    nodePortHttp: 30080
+    nodePortHttps: 30443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+repoServer:
+  replicas: 1
+  # 256Mi 首次 manifest 生成（git clone + kustomize）会 OOMKilled，提到 512Mi（总预算 1.41Gi ≤ 1.5Gi）
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+redis:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+dex:
+  enabled: false
+# ArgoCD v3.x 已将 ApplicationSet 变为核心组件（chart 移除了 enabled 开关），
+# 学习环境用不到 ApplicationSet，用 replicas: 0 缩到零以守住资源红线
+applicationSet:
+  replicas: 0
+notifications:
+  enabled: false

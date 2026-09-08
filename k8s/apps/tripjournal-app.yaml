@@ -1,0 +1,23 @@
+# 业务应用：tripjournal（国内层）Git→集群自动同步（源：Gitee 私有镜像仓，与控制面解耦）
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tripjournal
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitee.com/jamesfeng_2009/devops.git
+    targetRevision: main
+    path: k8s/tripjournal/overlays/cn
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tripjournal
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

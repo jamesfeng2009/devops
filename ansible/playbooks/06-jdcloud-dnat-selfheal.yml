@@ -1,0 +1,64 @@
+---
+# 京东云 Server 节点专属：k3s ClusterIP/公网 IP hairpin DNAT 自愈守护
+#
+# 背景：kube-proxy 把 kubernetes Service (10.43.0.1:443) 的 endpoint 指向公网 IP
+#       (117.72.69.23:6443)，京东云 1:1 NAT hairpin 被厂商阻断，节点本机/Pod 访问
+#       ClusterIP 超时。需在 nat OUTPUT/PREROUTING 的 KUBE-SERVICES 跳转之前插入
+#       直连私网 IP (172.16.0.3:6443) 的 DNAT。
+#
+# 为什么做成自愈守护而非 oneshot：iptables 规则仅存于内核内存，节点重启、k3s
+#       重启/崩溃重建（2026-09-08 曾以 17s/次 crash-loop 56 分钟共 200 次）、任何
+#       外部清刷都会丢规则。oneshot 只在开机跑一次防不住运行期丢失，守护进程每
+#       15s 断言一次（丢失即插回、被 KUBE-SERVICES 遮蔽即校正到链首）。
+- name: JD Cloud k3s hairpin DNAT self-healing
+  hosts: k3s_server
+  become: true
+  tasks:
+    - name: Remove legacy oneshot hairpin units (superseded by self-heal daemon)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/k3s-hairpin-dnat.service
+        - /etc/systemd/system/k3s-hairpin-fix.service
+      register: legacy_removed
+
+    - name: Stop legacy oneshot unit if loaded
+      ansible.builtin.systemd:
+        name: k3s-hairpin-dnat
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Deploy self-healing script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/k3s-dnat-ensure.sh"
+        dest: /usr/local/sbin/k3s-dnat-ensure.sh
+        mode: "0755"
+      register: ensure_script
+
+    - name: Deploy self-healing systemd unit
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/k3s-dnat-selfheal.service"
+        dest: /etc/systemd/system/k3s-dnat-selfheal.service
+        mode: "0644"
+      register: ensure_unit
+
+    - name: Enable and restart self-heal daemon
+      ansible.builtin.systemd:
+        name: k3s-dnat-selfheal
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Verify DNAT rules are in place (10.43.0.1 before KUBE-SERVICES)
+      ansible.builtin.command: iptables -t nat -S OUTPUT
+      register: nat_rules
+      changed_when: false
+
+    - name: Assert ClusterIP DNAT present
+      ansible.builtin.assert:
+        that:
+          - "'-d 10.43.0.1/32' in nat_rules.stdout"
+          - "nat_rules.stdout.index('-d 10.43.0.1/32') < nat_rules.stdout.find('KUBE-SERVICES')"
+        success_msg: "DNAT rules verified: ClusterIP rule sits before KUBE-SERVICES"

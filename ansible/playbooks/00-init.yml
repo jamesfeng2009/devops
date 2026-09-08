@@ -1,0 +1,134 @@
+---
+# 三节点通用系统初始化：时间同步 / swap关闭 / 内核模块与调优 / MSS clamping
+- name: System init for K3s nodes
+  hosts: all
+  become: true
+  tasks:
+    - name: Refresh apt cache (Debian family, fresh images ship stale lists)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install base packages (chrony, wireguard-tools, curl, jq)
+      ansible.builtin.package:
+        name:
+          - chrony
+          - curl
+          - jq
+        state: present
+
+    - name: Install wireguard-tools (Ubuntu)
+      ansible.builtin.apt:
+        name: wireguard-tools
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install epel-release (Aliyun Linux)
+      ansible.builtin.command: dnf install -y epel-release
+      when: ansible_os_family == "RedHat"
+      changed_when: true
+      failed_when: false
+
+    - name: Install wireguard-tools (RedHat family, non-fatal)
+      ansible.builtin.command: dnf install -y wireguard-tools
+      when: ansible_os_family == "RedHat"
+      changed_when: true
+      failed_when: false
+
+    - name: Enable and start chrony (time sync, critical for TLS)
+      ansible.builtin.systemd:
+        name: chronyd
+        enabled: true
+        state: started
+
+    - name: Disable swap now
+      ansible.builtin.command: swapoff -a
+      changed_when: true
+      ignore_errors: true
+
+    - name: Comment out swap in /etc/fstab
+      ansible.builtin.shell: cp /etc/fstab /etc/fstab.bak && sed -i -e '/\sswap\s/s/^/#/' /etc/fstab
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Load kernel modules at boot (overlay, br_netfilter, wireguard)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k3s.conf
+        content: |
+          overlay
+          br_netfilter
+          wireguard
+        mode: "0644"
+      register: modules_conf
+
+    - name: Load kernel modules now
+      ansible.builtin.command: "modprobe {{ item }}"
+      loop: [overlay, br_netfilter, wireguard]
+      changed_when: true
+
+    - name: Apply kernel tuning for K3s + cross-cloud tunnel
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-k3s.conf
+        content: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          fs.inotify.max_user_instances = 8192
+          fs.inotify.max_user_watches = 1048576
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+          # 允许非 root 容器（hostNetwork 模式）绑定 <1024 端口
+          # K3s containerd 默认仅在容器独立 netns 生效 enable_unprivileged_ports
+          net.ipv4.ip_unprivileged_port_start = 0
+        mode: "0644"
+      register: sysctl_conf
+
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system
+      when: sysctl_conf.changed
+      changed_when: true
+
+    - name: Ensure ufw is inactive (cloud security groups handle perimeter)
+      ansible.builtin.command: ufw --force disable
+      when: ansible_os_family == "Debian"
+      register: ufw_result
+      changed_when: "'disabled' in ufw_result.stdout|lower"
+      failed_when: false
+
+    - name: Configure docker.io registry mirror on CN nodes (direct access blocked)
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/registries.yaml
+        content: |
+          mirrors:
+            docker.io:
+              endpoint:
+                - "{{ registry_mirror }}"
+        mode: "0644"
+      when: registry_mirror is defined
+
+    - name: Install MSS clamp unit (fix Wireguard MTU 1420 big-packet loss)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/mss-clamp.service
+        content: |
+          [Unit]
+          Description=TCPMSS clamp for cross-cloud Wireguard overlay
+          After=network.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/sh -c '/usr/sbin/iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || /usr/sbin/iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu'
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+      register: mss_unit
+
+    - name: Enable and apply MSS clamp
+      ansible.builtin.systemd:
+        name: mss-clamp
+        daemon_reload: true
+        enabled: true
+        state: started
+      when: mss_unit.changed or mss_unit is defined

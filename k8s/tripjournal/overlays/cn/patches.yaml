@@ -1,0 +1,42 @@
+# 调度封装：国内业务统一锁定腾讯云 Worker（base 保持环境无关，overlay 统一注入）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      nodeSelector:
+        cloud: tencent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trip-ledger-api
+spec:
+  template:
+    spec:
+      nodeSelector:
+        cloud: tencent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tripjournal-web
+spec:
+  template:
+    spec:
+      nodeSelector:
+        cloud: tencent
+---
+# 国内入口类：Ingress-Nginx（default class）+ TLS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tripjournal
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - tripbill.cn
+      secretName: tripbill-cn-tls

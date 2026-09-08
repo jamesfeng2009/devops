@@ -1,0 +1,34 @@
+---
+# Agent 节点加入集群（腾讯云 + 阿里云法兰克福）
+- name: Join K3s agents
+  hosts: k3s_agents
+  become: true
+  vars:
+    k3s_token: "{{ lookup('file', playbook_dir + '/../../secrets/k3s-node-token') }}"
+    install_url: "{{ 'https://rancher-mirror.rancher.cn/k3s/k3s-install.sh' if k3s_mirror == 'cn' else 'https://get.k3s.io' }}"
+  tasks:
+    - name: Install K3s agent
+      ansible.builtin.shell: |
+        curl -sfL {{ install_url }} | \
+        INSTALL_K3S_MIRROR={{ k3s_mirror }} \
+        INSTALL_K3S_VERSION={{ k3s_version }} \
+        INSTALL_K3S_SKIP_SELINUX_RPM=true \
+        INSTALL_K3S_SELINUX_WARN=true \
+        K3S_URL=https://{{ k3s_server_ip }}:6443 \
+        K3S_TOKEN={{ k3s_token }} \
+        sh -s - agent \
+          --node-name {{ node_name }} \
+          --node-ip {{ node_external_ip }} \
+          --node-external-ip {{ node_external_ip }} \
+          --flannel-iface {{ flannel_iface | default('eth0') }}
+      args:
+        creates: /usr/local/bin/k3s
+        executable: /bin/bash
+
+    - name: Wait for k3s-agent service active
+      ansible.builtin.systemd:
+        name: k3s-agent
+      register: agent_service
+      until: agent_service.status.ActiveState == "active"
+      retries: 30
+      delay: 10

@@ -1,0 +1,16 @@
+# Cert-Manager 证书管理（系统组件，锁定国内腾讯云节点，规避京东云控制面污点）
+crds:
+  enabled: true
+
+# 四个子组件均需显式调度（chart 顶层 nodeSelector 仅作用于 controller）
+nodeSelector:
+  cloud: tencent
+webhook:
+  nodeSelector:
+    cloud: tencent
+cainjector:
+  nodeSelector:
+    cloud: tencent
+startupapicheck:
+  nodeSelector:
+    cloud: tencent

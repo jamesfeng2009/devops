@@ -1,0 +1,12 @@
+# Kustomize base：环境无关的业务清单
+# 数据库凭据 Secret 由 sealed-secrets 接管（overlays/cn/sealed-secret.yaml），
+# 明文源文件位于 secrets/tripjournal-secret.yaml（gitignore，仅灾难恢复重新 seal 用）
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tripjournal
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - api.yaml
+  - web.yaml
+  - ingress.yaml

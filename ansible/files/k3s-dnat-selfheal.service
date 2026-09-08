@@ -1,0 +1,13 @@
+[Unit]
+Description=Self-healing DNAT for k3s ClusterIP/public-IP hairpin (JD Cloud 1:1 NAT)
+After=k3s.service
+Wants=k3s.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/sbin/k3s-dnat-ensure.sh
+
+[Install]
+WantedBy=multi-user.target

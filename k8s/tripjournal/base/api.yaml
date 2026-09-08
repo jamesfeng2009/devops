@@ -1,0 +1,49 @@
+# trip-ledger API（Hono 后端，镜像已从宿主机 Docker 导入本节点 containerd）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trip-ledger-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trip-ledger-api
+  template:
+    metadata:
+      labels:
+        app: trip-ledger-api
+    spec:
+      containers:
+        - name: api
+          # 镜像来自本节点导入（imagePullPolicy 必须显式 IfNotPresent，latest 默认会 Always）
+          image: docker.io/library/server-app:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: tripjournal-secrets
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trip-ledger-api
+spec:
+  selector:
+    app: trip-ledger-api
+  ports:
+    - port: 3000
+      targetPort: 3000

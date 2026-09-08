@@ -1,0 +1,127 @@
+---
+# K3s 单Server部署（京东云控制面）：公网SAN + wireguard-native + 定时快照
+- name: Deploy K3s server
+  hosts: k3s_server
+  become: true
+  tasks:
+    - name: Verify pinned K3s version exists on CN mirror (+ is rewritten to - on mirror)
+      ansible.builtin.uri:
+        url: "https://rancher-mirror.rancher.cn/k3s/{{ k3s_version | regex_replace('\\+', '-') }}/k3s"
+        method: HEAD
+        status_code: [200, 302]
+      register: version_check
+      ignore_errors: true
+
+    - name: Fail fast if pinned version unavailable
+      ansible.builtin.fail:
+        msg: "K3s {{ k3s_version }} not found on mirror, adjust k3s_version in inventory"
+      when: version_check is failed
+
+    - name: Install K3s server
+      ansible.builtin.shell: |
+        curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | \
+        INSTALL_K3S_MIRROR=cn \
+        INSTALL_K3S_VERSION={{ k3s_version }} \
+        sh -s - server \
+          --node-name {{ node_name }} \
+          --node-ip {{ node_external_ip }} \
+          --node-external-ip {{ node_external_ip }} \
+          --tls-san {{ node_external_ip }} \
+          --flannel-backend=wireguard-native \
+          --flannel-external-ip \
+          --flannel-iface {{ flannel_iface | default('eth0') }} \
+          --disable-network-policy \
+          --disable traefik \
+          --write-kubeconfig-mode 600
+      args:
+        creates: /usr/local/bin/k3s
+        executable: /bin/bash
+
+    # 注意：SQLite 后端不支持 --etcd-snapshot（仅 etcd 生效），改用 sqlite3 .backup 定时备份
+    - name: Install sqlite3 for backup
+      ansible.builtin.apt:
+        name: sqlite3
+        state: present
+
+    - name: Install SQLite backup script (keeps last 10, every 6h)
+      ansible.builtin.copy:
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode }}"
+        content: "{{ item.content }}"
+      loop:
+        - dest: /usr/local/bin/k3s-sqlite-backup.sh
+          mode: "0755"
+          content: |
+            #!/bin/bash
+            set -e
+            DB=/var/lib/rancher/k3s/server/db/state.db
+            DIR=/var/lib/rancher/k3s/server/db/snapshots
+            KEEP=10
+            sqlite3 "$DB" ".backup $DIR/state-$(date +%Y%m%d-%H%M%S).db"
+            ls -1t $DIR/state-*.db | tail -n +$((KEEP+1)) | xargs -r rm -f
+        - dest: /etc/systemd/system/k3s-sqlite-backup.service
+          mode: "0644"
+          content: |
+            [Unit]
+            Description=K3s SQLite state.db backup
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/bin/k3s-sqlite-backup.sh
+        - dest: /etc/systemd/system/k3s-sqlite-backup.timer
+          mode: "0644"
+          content: |
+            [Unit]
+            Description=K3s SQLite backup every 6h
+
+            [Timer]
+            OnCalendar=*-*-* 0/6:00:00
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+
+    - name: Enable SQLite backup timer
+      ansible.builtin.systemd:
+        name: k3s-sqlite-backup.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+
+    - name: Wait for API server 6443
+      ansible.builtin.wait_for:
+        port: 6443
+        timeout: 180
+
+    - name: Wait for node Ready
+      ansible.builtin.command: kubectl get node {{ node_name }}
+      register: node_status
+      until: "' Ready' in node_status.stdout"
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Read agent join token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: node_token_raw
+
+    - name: Save token locally for agents playbook (secrets/ is gitignored)
+      ansible.builtin.copy:
+        content: "{{ node_token_raw.content | b64decode }}"
+        dest: "{{ playbook_dir }}/../../secrets/k3s-node-token"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+
+    - name: Fetch kubeconfig to local (rewrite server address to public IP)
+      ansible.builtin.shell: |
+        sed 's/127.0.0.1/{{ node_external_ip }}/' /etc/rancher/k3s/k3s.yaml > /tmp/k3s-public.yaml
+      changed_when: true
+
+    - name: Copy public kubeconfig to local machine
+      ansible.builtin.fetch:
+        src: /tmp/k3s-public.yaml
+        dest: "~/.kube/devops-k3s-config"
+        flat: true
+      become: false

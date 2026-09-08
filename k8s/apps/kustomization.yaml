@@ -1,0 +1,12 @@
+# 平台层（Git 托管）：ArgoCD Applications 引导清单 + Sealed Secrets（仓库凭证）
+# 密文管理：tripjournal-secrets / gitee-* 凭证由 sealed-secrets 控制器解密，Git 内仅存密文
+# 明文源文件位于 secrets/（gitignore，仅灾难恢复重新 seal 用）
+# 入口：argocd-server NodePort 30443 TLS（helm values 管理），域名入口已弃用
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - tripjournal-app.yaml
+  - argocd-apps-app.yaml
+  - demo-app-app.yaml
+  - sealed-gitee-tripjournal.yaml
+  - sealed-gitee-devops.yaml

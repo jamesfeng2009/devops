@@ -1,0 +1,25 @@
+# demo-app 的 ArgoCD Application（源：Gitee jamesfeng_2009/TripJournal 镜像仓）
+# 链路：GitHub Actions 构建 → ACR 推镜像 → CI 改 tag 双推 → Gitee(主源) → ArgoCD 自动同步
+# 前置（已完成）：ArgoCD 仓库凭证 gitee-tripjournal（kubectl 手工创建，不入 Git）
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitee.com/jamesfeng_2009/TripJournal.git
+    targetRevision: main
+    path: k8s/demo-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
