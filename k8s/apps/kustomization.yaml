@@ -8,5 +8,7 @@ resources:
   - tripjournal-app.yaml
   - argocd-apps-app.yaml
   - demo-app-app.yaml
+  - intelligenttest-app.yaml
   - sealed-gitee-tripjournal.yaml
   - sealed-gitee-devops.yaml
+  - sealed-gitee-intelligenttest.yaml
