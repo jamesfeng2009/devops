@@ -1,7 +1,7 @@
-# intelligent-test 的 ArgoCD Application（源：Gitee jamesfeng_2009/intelligentTest 镜像仓）
+# intelligent-test 海外版（eu）ArgoCD Application（源：Gitee jamesfeng_2009/intelligentTest 镜像仓）
 # 链路：GitHub Actions 构建 → ACR 推镜像 → CI 改 tag 双推 → Gitee(主源) → ArgoCD 自动同步
 # 前置（已完成）：ArgoCD 仓库凭证 gitee-intelligenttest（sealed-gitee-intelligenttest.yaml）
-# 目标：阿里云法兰克福节点（region=eu），NodePort 30082 直连访问
+# 目标：阿里云法兰克福节点（region=eu），NodePort 30083 直连访问
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -14,7 +14,7 @@ spec:
   source:
     repoURL: https://gitee.com/jamesfeng_2009/intelligentTest.git
     targetRevision: main
-    path: k8s
+    path: k8s/overlays/eu
   destination:
     server: https://kubernetes.default.svc
     namespace: intelligent-test
@@ -23,4 +23,4 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=false # namespace 已手工预建（含 acr-pull-secret）
+      - CreateNamespace=true # namespace 定义在 overlay 清单中，GitOps 自包含

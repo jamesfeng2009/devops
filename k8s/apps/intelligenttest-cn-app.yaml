@@ -1,0 +1,25 @@
+# intelligent-test 国内版（cn）ArgoCD Application（与 eu 版同仓不同 overlay）
+# 目标：腾讯云 Worker（cloud=tencent），NodePort 30084，国内访问秒开
+# 前置：acr-pull-secret 需预先建在 intelligent-test-cn ns（与 eu ns 同内容，手工拷贝）
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: intelligent-test-cn
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitee.com/jamesfeng_2009/intelligentTest.git
+    targetRevision: main
+    path: k8s/overlays/cn
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: intelligent-test-cn
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
