@@ -13,6 +13,20 @@ spec:
       labels:
         app: trip-ledger-api
     spec:
+      # 启动顺序依赖：PG 重建期间 api 迁移会 ECONNREFUSED 退出 → CrashLoop + Gatus 误报。
+      # 等 PG 就绪后再启动主容器（镜像 IfNotPresent，节点上已有，零拉取成本）
+      initContainers:
+        - name: wait-db
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "until pg_isready -h postgres.tripjournal.svc.cluster.local -p 5432 -t 3; do echo 'waiting for postgres'; sleep 3; done"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
       containers:
         - name: api
           # 镜像来自本节点导入（imagePullPolicy 必须显式 IfNotPresent，latest 默认会 Always）
