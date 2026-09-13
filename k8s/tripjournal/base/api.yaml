@@ -21,6 +21,18 @@ spec:
           envFrom:
             - secretRef:
                 name: tripjournal-secrets
+          # 安全加固：镜像内置 node 用户(uid 1000)，应用监听 3000 非特权端口
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           ports:
             - containerPort: 3000
           resources:
@@ -36,6 +48,9 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 12
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

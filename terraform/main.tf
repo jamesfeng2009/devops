@@ -46,20 +46,12 @@ resource "tencentcloud_dnspod_record" "www" {
   ttl         = 600
 }
 
-# 海外测试入口（阿里云法兰克福 Worker，Traefik hostPort）
-resource "tencentcloud_dnspod_record" "eu" {
-  domain      = var.domain
-  sub_domain  = "eu"
-  record_type = "A"
-  record_line = "默认"
-  value       = "8.209.89.31"
-  ttl         = 600
-}
+# 海外 demo 入口：纯 IP 直连（http://8.209.89.31，Traefik hostPort），不占域名
+# eu 子域名预留给小程序业务，如需启用再在此添加 A 记录
 
 output "record_ids" {
   value = {
-    root   = tencentcloud_dnspod_record.root.id
-    www    = tencentcloud_dnspod_record.www.id
-    eu     = tencentcloud_dnspod_record.eu.id
+    root = tencentcloud_dnspod_record.root.id
+    www  = tencentcloud_dnspod_record.www.id
   }
 }

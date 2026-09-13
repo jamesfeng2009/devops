@@ -1,0 +1,169 @@
+# Gatus-CN：腾讯云 Worker（国内业务主力节点）探测实例
+# 探测矩阵（实测 2026-09-13 全通过）：本节点业务走公网（hairpin 对 hostNetwork 443 无影响）、
+# 集群内 ArgoCD/API、跨节点外部视角（法兰克福 Traefik 404 默认后端 = 存活）
+# 飞书 webhook：Secret monitoring-alerts（SealedSecret 管理），连续失败 3 次触发、恢复 2 次解除
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gatus-config-cn
+  namespace: monitoring
+data:
+  config.yaml: |
+    ui:
+      title: DevOps Status | CN-Worker
+      header: 腾讯云 Worker 探测视角
+    alerting:
+      custom:
+        url: ${FEISHU_WEBHOOK_URL}
+        body: |
+          {
+            "msg_type": "text",
+            "content": {"text": "[Gatus-CN] [ALERT_TITLE]\n端点: [ENDPOINT_NAME]\n地址: [ENDPOINT_URL]\n结果: [RESULT]（HTTP [HTTP_STATUS]，[RESPONSE_TIME]ms，连续失败 [FAILURE_COUNT] 次）\n[ALERT_DESCRIPTION]"}
+          }
+    endpoints:
+      - name: tripbill.cn[业务官网+证书]
+        url: https://tripbill.cn
+        interval: 60s
+        conditions:
+          - "[STATUS] == 200"
+          - "[CERTIFICATE_EXPIRATION] > 1200h"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 官网不可达或 LE 证书剩余有效期不足 50 天
+      - name: tripbill.cn/api[后端API]
+        url: https://tripbill.cn/api/
+        interval: 60s
+        conditions:
+          - "[STATUS] < 500"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: trip-ledger API 不可达（404=路由存在即存活，5xx/超时=后端故障）
+      - name: argocd-api[集群内]
+        url: https://argocd-server.argocd.svc/healthz
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 200"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: ArgoCD Server 健康检查失败
+      - name: k8s-apiserver[集群内]
+        url: https://kubernetes.default.svc/healthz
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 401"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: K8s APIServer 不可达（401 未认证=存活，anonymous-auth 关闭）
+      - name: demo-app[30081]
+        url: http://124.221.136.117:30081
+        interval: 120s
+        conditions:
+          - "[STATUS] == 200"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: demo-app NodePort 不可达
+      - name: traefik-eu[法兰克福外部视角]
+        url: https://8.209.89.31
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 404"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 法兰克福 Traefik 不可达（404 默认后端=存活）
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatus-cn
+  namespace: monitoring
+  labels:
+    app: gatus-cn
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gatus-cn
+  template:
+    metadata:
+      labels:
+        app: gatus-cn
+    spec:
+      nodeSelector:
+        cloud: tencent
+      containers:
+        - name: gatus
+          image: docker.io/twinproduction/gatus:v5.36.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GATUS_CONFIG_PATH
+              value: /config/config.yaml
+            - name: FEISHU_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-alerts
+                  key: feishu_webhook_url
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: config
+          configMap:
+            name: gatus-config-cn
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gatus-cn
+  namespace: monitoring
+spec:
+  selector:
+    app: gatus-cn
+  ports:
+    - port: 8080
+      targetPort: 8080

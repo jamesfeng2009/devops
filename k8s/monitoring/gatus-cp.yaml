@@ -1,0 +1,150 @@
+# Gatus-CP：京东云 Server（控制面节点）探测实例
+# 关键探测：kubernetes.default.svc 从京东云 Pod 内访问 = NAT hairpin DNAT 自愈守护链路
+#（k3s-dnat-selfheal.service）的有效性监控——规则丢失即告警
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gatus-config-cp
+  namespace: monitoring
+data:
+  config.yaml: |
+    ui:
+      title: DevOps Status | Control-Plane
+      header: 京东云 Server 探测视角
+    alerting:
+      custom:
+        url: ${FEISHU_WEBHOOK_URL}
+        body: |
+          {
+            "msg_type": "text",
+            "content": {"text": "[Gatus-CP] [ALERT_TITLE]\n端点: [ENDPOINT_NAME]\n地址: [ENDPOINT_URL]\n结果: [RESULT]（HTTP [HTTP_STATUS]，[RESPONSE_TIME]ms，连续失败 [FAILURE_COUNT] 次）\n[ALERT_DESCRIPTION]"}
+          }
+    endpoints:
+      - name: k8s-apiserver[控制面自检+DNAT自愈]
+        url: https://kubernetes.default.svc/healthz
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 401"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 控制面 APIServer 不可达（若其余探测正常，优先排查 k3s-dnat-selfheal 服务）
+      - name: argocd-api[控制面本节点]
+        url: https://argocd-server.argocd.svc/healthz
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 200"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: ArgoCD Server 健康检查失败
+      - name: tripbill.cn[跨节点外部视角]
+        url: https://tripbill.cn
+        interval: 120s
+        conditions:
+          - "[STATUS] == 200"
+          - "[CERTIFICATE_EXPIRATION] > 1200h"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 从控制面视角官网不可达或证书即将到期
+      - name: traefik-eu[法兰克福外部视角]
+        url: https://8.209.89.31
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 404"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 法兰克福 Traefik 不可达
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatus-cp
+  namespace: monitoring
+  labels:
+    app: gatus-cp
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gatus-cp
+  template:
+    metadata:
+      labels:
+        app: gatus-cp
+    spec:
+      nodeSelector:
+        cloud: jdcloud
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: gatus
+          image: docker.io/twinproduction/gatus:v5.36.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GATUS_CONFIG_PATH
+              value: /config/config.yaml
+            - name: FEISHU_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-alerts
+                  key: feishu_webhook_url
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: config
+          configMap:
+            name: gatus-config-cp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gatus-cp
+  namespace: monitoring
+spec:
+  selector:
+    app: gatus-cp
+  ports:
+    - port: 8080
+      targetPort: 8080

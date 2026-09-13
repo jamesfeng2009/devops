@@ -1,0 +1,14 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: feishu-alerts
+  namespace: tripjournal
+spec:
+  encryptedData:
+    feishu_webhook_url: AgDJxPeDMbgpgqU5TagQv11L7Hkgav7+pTq1M0jgUtlZrqEuyl0YiWAwovuUS7NrJBTvAp857Ax45AZWjP/J6ErSEiT0wrXrPtoJI66k2Ht1jcrgjfX+cqzBgXP3n0JgTeID114wmyS0DYsu7z2VhpT2/6cbs+MtUDgqD14cswMi7dMusfZfWb8BkGh/bYMwM4merql+uyz5/8OASEQX4viG+CRi56qGjhpdfWfcUHTjG66oJNF1glGIuQpfi8yIoPyrMaqVuamQ1z67ywiIq52rE9kyUUPDfDzdlzI2c2leVLyIFVfx3ZwDJwSCres//rMk9PwesGH5umH0eKejTCZm+TBi8etA8CkrfXmE5/1zKRx4elOghkzeIl3rF8Pcfb+FvBcE8YlfGTTz0yH47PbcwSB+DAEBHAbr63xxRoECrMQooXZv+/sr4E1i8v2OoIsNkosdLRHAIc40umD8ejdXI5LYcDaUpxw6mgYv0VQDC5H4Z2TuUkgDuUQOBWbHyP1JYEjeIGeC/kBArg4o6AohhjiUCVDVL7hsg3B/ZajHBfpMkhI4OUHcjI6lY8Tab16qJ4RGa0p+f+EiNPyepfH8Oo7kUys2BuOZH9zm4i0wfcHLdcIDJdXdaavCXgcFGVt/sp+QdllzRSw3OQi2UZSN8XS+bbz/soCoYBHchQSaM4joLrLI3wVgY29iF7C3RPWjr9UWafu9Wvd/HaVZv6vo6O3l6n7Its/YQpdJhVFhmix6h1nmGfo+slRmaiPtL4j2XrdJ8dF820llV743FH/JR4aK56eqCReRKpfT4hy8ifs=
+  template:
+    metadata:
+      name: feishu-alerts
+      namespace: tripjournal
+    type: Opaque

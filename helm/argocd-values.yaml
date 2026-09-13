@@ -25,7 +25,7 @@ configs:
     timeout.reconciliation: 60s
   secret:
     # bcrypt 哈希可入库（单向不可逆），明文在 secrets/credentials.local
-    argocdServerAdminPassword: "$2y$10$X8witpOh/deXdnG6HSRWz.GXH6K5GoZCX97iSZgydQ1K3koqQxtRq"
+    argocdServerAdminPassword: "$2y$10$mGLHGvqnfPeK7vw7p6jYx.cbrl/2sg4/IWO01EPEWGMscNqXbspnS"
 
 # 单副本 + 关闭非核心组件
 controller:
@@ -63,6 +63,31 @@ repoServer:
     limits:
       cpu: 300m
       memory: 512Mi
+  # 探针调优：/healthz?full=true 深度检查在低配节点易超 1s（Helm 默认 timeout=1），
+  # 曾导致 repo-server 误判重启。放宽 liveness/readiness 到 5s，并增加 startup 探针避免冷启动被杀
+  livenessProbe:
+    httpGet:
+      path: /healthz?full=true
+      port: 8084
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 5
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8084
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+  startupProbe:
+    httpGet:
+      path: /readyz
+      port: 8084
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 30 # 最长容忍 150s 冷启动（git 二进制首次解压等）
 redis:
   resources:
     requests:

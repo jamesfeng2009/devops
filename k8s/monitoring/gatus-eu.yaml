@@ -1,0 +1,146 @@
+# Gatus-EU：阿里云法兰克福（海外测试节点）探测实例
+# 关键探测：海外独立公网视角（与中国大陆链路故障天然解耦）+ ArgoCD 30443 公网入口
+# 注意：30443 防火墙收窄后必须保留放行 8.209.89.31（阿里云法兰克福 IP），否则本探测失效
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gatus-config-eu
+  namespace: monitoring
+data:
+  config.yaml: |
+    ui:
+      title: DevOps Status | EU-Worker
+      header: 法兰克福 Worker 探测视角
+    alerting:
+      custom:
+        url: ${FEISHU_WEBHOOK_URL}
+        body: |
+          {
+            "msg_type": "text",
+            "content": {"text": "[Gatus-EU] [ALERT_TITLE]\n端点: [ENDPOINT_NAME]\n地址: [ENDPOINT_URL]\n结果: [RESULT]（HTTP [HTTP_STATUS]，[RESPONSE_TIME]ms，连续失败 [FAILURE_COUNT] 次）\n[ALERT_DESCRIPTION]"}
+          }
+    endpoints:
+      - name: tripbill.cn[海外公网视角]
+        url: https://tripbill.cn
+        interval: 60s
+        conditions:
+          - "[STATUS] == 200"
+          - "[CERTIFICATE_EXPIRATION] > 1200h"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 海外视角官网不可达（若国内视角正常则为跨境链路/防火墙问题）
+      - name: argocd-ui[30443公网]
+        url: https://124.221.136.117:30443
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 200"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: ArgoCD 公网入口不可达（排查腾讯云防火墙/NodePort）
+      - name: k8s-apiserver[经WireGuard]
+        url: https://kubernetes.default.svc/healthz
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 401"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 法兰克福节点经 WireGuard 到 APIServer 不可达（节点离线前兆）
+      - name: traefik-eu[本节点]
+        url: https://8.209.89.31
+        interval: 120s
+        client:
+          insecure: true
+        conditions:
+          - "[STATUS] == 404"
+        alerts:
+          - type: custom
+            failure-threshold: 3
+            success-threshold: 2
+            send-on-resolved: true
+            description: 本节点 Traefik 不可达
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatus-eu
+  namespace: monitoring
+  labels:
+    app: gatus-eu
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gatus-eu
+  template:
+    metadata:
+      labels:
+        app: gatus-eu
+    spec:
+      nodeSelector:
+        cloud: aliyun
+      containers:
+        - name: gatus
+          image: docker.io/twinproduction/gatus:v5.36.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GATUS_CONFIG_PATH
+              value: /config/config.yaml
+            - name: FEISHU_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-alerts
+                  key: feishu_webhook_url
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: config
+          configMap:
+            name: gatus-config-eu
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gatus-eu
+  namespace: monitoring
+spec:
+  selector:
+    app: gatus-eu
+  ports:
+    - port: 8080
+      targetPort: 8080

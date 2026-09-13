@@ -262,6 +262,129 @@
    - **PG 备份（P0）**：CronJob `postgres-backup`（`overlays/cn/postgres-backup.yaml`）每日 05:00 北京时间 pg_dump -Fc → REST API PUT → 清理 30 天前对象，已实测全链路通过（dump 17.5K 落桶验证）。
    - **SQLite 快照（P1）**：`k3s-sqlite-backup.sh` 每 6h 本地保留 10 份 + 推 `k3s-state/`（失败不阻断本地备份，日志告警，下次重试），已实测通过（45M 快照落桶验证）。
    - 踩坑——①Cloudflare R2 生命周期规则 API（PUT /lifecycle）始终报 "Each rule must have a transition specified"，携带 TransitionObject 仍被拒，放弃平台级清理改脚本按文件名日期清理（文件名自带 YYYYMMDD）；②alpine busybox `date` 不支持 `-d '30 days ago'`，改 epoch 运算（GNU date 的剧本脚本不受影响）；③GitHub 对法兰克福节点的 git push 返回 403（API 同 token 正常，反滥用限制），GitHub 镜像只能本地直连推送（时通时断）。
-   - 待办（可选）：该 Bearer Token 权限较大（可建桶），后续可在 Cloudflare 为备份单独创建最小权限 API Token 替换。
+   - 待办（可选）：该 Bearer Token权限较大（可建桶），后续可在 Cloudflare 为备份单独创建最小权限 API Token 替换。
+
+# 十、可观测性与安全加固收官（2026-09-13，P0/P1/P2 全量落地）
+
+## 10.1 多节点监控与告警（P0 ✅）
+
+**Gatus 三节点互为外部探测**（`k8s/monitoring/gatus-{cp,cn,eu}.yaml`）：
+- `gatus-cp`（京东云）：监控 ArgoCD/cert-manager/webhook-adapter 等控制面组件 + k8s-apiserver（token 探测 `[STATUS] == 401` 为健康）。
+- `gatus-cn`（腾讯云）：探测国内业务端点（tripbill.cn、各 NodePort 业务）+ 金丝雀测试端点（验证告警链路）。
+- `gatus-eu`（阿里云法兰克福）：从海外视角探测国内入口与控制面，跨地域互为备份探测。
+- 告警通道：三份配置统一 `alerting.custom` POST 飞书 webhook（凭证 SealedSecret `monitoring-alerts`/`feishu-alerts` sealed 入 Git）。踩坑——①Gatus v5.x **没有 webhook 提供商**，必须用 `custom`（补 `method: POST` + `Content-Type: application/json` 头）；②证书过期检查占位符 `[CERTIFICATE_EXPIRATION_DAYS]` 已被移除，改用 `[CERTIFICATE_EXPIRATION] > 1200h`（50 天）；③条件不支持 `||` 逻辑或，多分支需拆成多条 condition。
+
+**备份任务失败直发飞书（P0）**：
+- PG（CronJob）：`postgres-backup` 脚本 `set -e` + `trap EXIT`，任一步骤失败（dump/上传/清理）立即 POST 飞书（`feishu-alerts` Secret 注入 `FEISHU_WEBHOOK_URL`）。
+- SQLite（systemd）：`k3s-sqlite-backup.sh` 增加 `feishu()` + `STAGE` 阶段标记 + EXIT trap；R2 推送失败同样直发。凭据并入 `/root/.r2-backup-cred`（`FEISHU_WEBHOOK_URL` 行，ansible no_log 部署）。已实测：模拟失败触发（rc=1）+ webhook 直发验证（`StatusCode:0`）。
+
+## 10.2 轻量日志栈 Loki + Promtail + Grafana（P2 ✅）
+
+- `loki`（腾讯节点，文件系统存储，保留 7 天，内存严控）+ `promtail`（DaemonSet 三节点）+ `grafana`（NodePort 30085，Loki 数据源）。
+- **关键踩坑——Promtail 全部 target 被静默丢弃（`targets_active_total=0`）**：kubernetes SD 发现的每个 target 必须带 `__host__` 标签且等于 Promtail 本机 hostname（官方文档：node affinity 校验），且 Pod 内 hostname 默认是 Pod 名而非节点名。修复两件套：①relabel 增加 `__meta_kubernetes_pod_node_name → __host__`；②容器注入 `env HOSTNAME`（downward API `spec.nodeName`）。修复后三节点 10/8/22 targets 全部采集，日志可查询（Loki label 含 namespace/pod/container/node）。
+
+## 10.3 探针与容器加固（P1/P2 ✅）
+
+**argocd-repo-server 探针调优（P1）**：`/healthz?full=true` 深度检查在低配节点易超 Helm 默认 `timeout=1s`，导致误判重启。helm values 放宽 liveness/readiness `timeoutSeconds: 5` + `periodSeconds: 20/10` + `failureThreshold: 5`，并新增 `startupProbe`（30×5s=150s 冷启动容忍）。升级命令（Helm v4 + 字段所有权冲突处置）：
+
+```bash
+# 本地下载 chart 超时走 gh-proxy 镜像
+helm upgrade argocd /tmp/argo-cd-10.8.2.tgz -n argocd \
+  -f helm/argocd-values.yaml --force-conflicts
+# --force-conflicts 仅转移 argocd-secret 中 kubectl-patch 管理的 admin.passwordMtime 所有权，
+# 不触碰 argocd-server 自管字段（webhook secret / tls）
+```
+
+**业务容器安全加固（P2，逐个验证落地）**：统一模式 `runAsNonRoot` + `readOnlyRootFilesystem` + `allowPrivilegeEscalation: false` + `drop ALL caps`，需写的路径用 emptyDir：
+
+| 容器 | 运行身份 | 关键改动 | 备注 |
+|---|---|---|---|
+| trip-ledger-api | node(1000) | `/tmp` emptyDir | 监听 3000 非特权端口 |
+| tripjournal-web | nginx(101) | listen 80→8080，`/var/cache/nginx`+`/run` emptyDir，conf 走 ConfigMap | Service targetPort 同步 8080（Ingress 仍 80） |
+| postgres ×3 | postgres(70/999) | `/var/run/postgresql`+`/tmp` emptyDir | **前置：数据卷 chown**（见 runbook） |
+
+未加固项（需镜像侧改造，Git 记录）：demo-app、intelligent-test 两个 ACR 私有镜像内置无普通用户且监听 80，需 Dockerfile 加 `USER` + 改非特权端口重新构建。
+
+## 10.4 备份恢复演练与 Runbook（P1 ✅ 2026-09-13 实测通过）
+
+**演练结论**：PG 恢复演练（R2 `pg/trip_ledger-20260912-1300.dump` → 临时库 restore_drill，11 张表行数与生产一致，ROW-COUNTS-MATCH）；SQLite 快照校验（本地 10 份 + R2 `k3s-state/state-20260913-133751.db` 45M 下载后 `PRAGMA integrity_check` ok，kine 2066 行可读）。
+
+### Runbook A：PG 数据恢复（R2 最新工件）
+
+```bash
+# 1. 找最新工件（本地或任一节点均可执行）
+source secrets/r2-backup-cred
+curl -sf -H "Authorization: Bearer $R2_BEARER_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$R2_ACCOUNT_ID/r2/buckets/$R2_BUCKET/objects?prefix=pg/&per_page=100" \
+  | jq -r '[.result[]?.key] | sort | last'
+
+# 2. 集群内试灌/恢复（用参考 /tmp/pg-restore-drill.yaml 的 Job 模板改两处：
+#    目标库为生产 trip_ledger 时跳过 row-count 对比、不 DROP；脚本走 CREATE DATABASE + pg_restore）
+kubectl apply -f /tmp/pg-restore-drill.yaml && kubectl logs -f -n tripjournal job/pg-restore-drill
+
+# 3. 验证后清理演练库
+kubectl delete job pg-restore-drill -n tripjournal
+```
+
+### Runbook B：K3s SQLite 集群状态恢复
+
+```bash
+# 前提：新机部署好 k3s（同版本，看 10-k3s-server.yml）
+# 1. 下载最新异地快照
+source /root/.r2-backup-cred
+LATEST=$(curl -sf -H "Authorization: Bearer $R2_BEARER_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$R2_ACCOUNT_ID/r2/buckets/$R2_BUCKET/objects?prefix=k3s-state/&per_page=100" \
+  | jq -r '[.result[]?.key] | sort | last')
+curl -sf -H "Authorization: Bearer $R2_BEARER_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$R2_ACCOUNT_ID/r2/buckets/$R2_BUCKET/objects/$LATEST" \
+  -o /tmp/state.db
+
+# 2. 校验
+sqlite3 /tmp/state.db "PRAGMA integrity_check;"
+
+# 3. 停 k3s → 覆盖 db → 重启（恢复到快照时刻的整个集群状态）
+systemctl stop k3s
+cp /tmp/state.db /var/lib/rancher/k3s/server/db/state.db
+systemctl start k3s && kubectl get nodes
+```
+
+### Runbook C：PG 数据卷属主切换（容器加固前置操作）
+
+```bash
+# 顺序（以 tripjournal 为例，intelligent-test 同理 uid=999，StatefulSet 同样 scale 0）
+# 1. 暂停 GitOps 自动同步（避免 selfHeal 拉回副本）
+kubectl patch app tripjournal -n argocd --type=merge \
+  -p '{"spec":{"syncPolicy":{"automated":null}}}'
+kubectl scale deploy postgres -n tripjournal --replicas=0
+
+# 2. 节点上 chown 数据目录（local-path 目录含 pvc-<uuid>_tripjournal_postgres-data）
+ssh 腾讯云节点 'chown -R 70:70 /var/lib/rancher/k3s/storage/pvc-*_tripjournal_postgres-data'
+
+# 3. push 后恢复自动同步（ArgoCD 以 uid 70 重建 Pod）
+kubectl patch app tripjournal -n argocd --type=merge \
+  -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+kubectl wait -n tripjournal deploy/postgres --for=condition=available --timeout=180s
+```
+
+## 10.5 防火墙收窄方案（P0，三云控制台手动操作）
+
+管理入口仅办公出口 IP `183.195.45.6` 与海外节点 `8.209.89.31`（Gatus 海外探测）可访问：
+
+| 云 | 端口 | 现状 | 收窄目标（控制台安全组/防火墙规则） |
+|---|---|---|---|
+| 腾讯云 | 30443/tcp (ArgoCD UI) | 全网放行 | 删除 0.0.0.0/0 规则，改 `183.195.45.6/32` + `8.209.89.31/32` |
+| 腾讯云 | 30085/tcp (Grafana) | 全网放行 | 同上两条 /32 |
+| 腾讯云 | 30080/30081-30083 | 业务 NodePort | 保留（对外业务入口不动） |
+| 京东云 | 30443/30085 不在本节点 | — | 无需操作（ArgoCD/Grafana 均在腾讯节点） |
+| 阿里云 | 30083/tcp (intelligent-test) | 业务端口 | 保留 |
+
+操作路径：腾讯云控制台 → 轻量应用服务器/CVM → 防火墙（或安全组）→ 找到 30443 与 30085 的允许规则 → 修改来源为上述两个 /32 IP → 保存。完成后验证：办公网 `https://124.221.136.117:30443` 可达、外网（如手机热点）应超时；Gatus-eu（阿里云 IP 源）对 30443 的探测持续正常。
+
+## 10.6 遗留待办
+
+1. demo-app / intelligent-test 镜像侧改造（Dockerfile USER + 非特权端口）后补齐 runAsNonRoot。
+2. intelligent-test 两个环境的 PG 数据卷 chown 999（Runbook C），配合该仓 `k8s/base/postgres.yaml` 加固提交一起生效。
+3. 等 trip_ledger 有真实业务数据后，重跑恢复演练对比真实行数。
+4. Prometheus 指标采集（Gatus/Loki 指标 → Grafana 面板）为可选增强。
 
 > （注：部分内容可能由 AI 生成）

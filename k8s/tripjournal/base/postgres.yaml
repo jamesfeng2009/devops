@@ -23,11 +23,25 @@ spec:
           envFrom:
             - secretRef:
                 name: tripjournal-secrets
-          ports:
-            - containerPort: 5432
+          # 安全加固：PG 官方 alpine 镜像内置 postgres 用户(uid 70)。
+          # 前置条件：数据卷目录需 chown 70:70（runbook：scale 0 → chown → 恢复）
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: sock
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+          ports:
+            - containerPort: 5432
           resources:
             requests:
               cpu: 200m
@@ -49,6 +63,10 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: postgres-data
+        - name: sock
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

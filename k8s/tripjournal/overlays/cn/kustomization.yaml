@@ -7,6 +7,7 @@ resources:
   - certificate.yaml
   - sealed-secret.yaml
   - sealed-backup-r2.yaml
+  - sealed-feishu.yaml
   - postgres-backup.yaml
 patches:
   - path: patches.yaml

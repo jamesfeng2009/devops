@@ -1,0 +1,7 @@
+# 可观测性命名空间：Gatus×3（三节点互为外部探测）+ Loki + Promtail + Grafana
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: monitoring

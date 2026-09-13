@@ -1,0 +1,13 @@
+# 可观测性栈 Kustomize 入口（ArgoCD Application monitoring 指向本目录）
+# SealedSecret：飞书 webhook + Grafana 管理员密码（控制器解密为 monitoring-alerts）
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - sealed-monitoring-alerts.yaml
+  - gatus-cn.yaml
+  - gatus-cp.yaml
+  - gatus-eu.yaml
+  - loki.yaml
+  - promtail.yaml
+  - grafana.yaml
