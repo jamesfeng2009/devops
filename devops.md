@@ -413,6 +413,39 @@ jobs:
 
 **日常发布 = push main，零手工。** 流水线模板升级只需改 build-deploy.yml 一处，全部引用项目生效。
 
+## 10.8 环境分层落地：阶段1 同集群隔离 → 阶段2 独立测试集群（2026-09-13 ✅）
+
+### 架构与端口
+
+- 阶段1（生产集群内隔离）：tripjournal-test / intelligent-test-test namespace + ResourceQuota，prod 三应用 automated off 手动同步。
+- 阶段2（物理隔离）：**k3s-test** 独立单节点集群，跑在京东云宿主 docker 容器内（`rancher/k3s:v1.32.13-k3s1 --privileged`），数据卷 `/root/k3s-test-data`，站点卷 `/var/www`。
+- 端口占用表（宿主 → k3s-test）：`7443→6443`（APIServer）；NodePort `30090` tripjournal web / `30091` tripledger api / `30092` intelligent-test（eu=30083 / cn=30084 / argocd=30080 / demo=30081 / webhook=30082 / itest旧=30083-84 / grafana=30085）。
+
+### 踩坑实录（京东云 1:1 NAT hairpin）
+
+1. **pod/宿主访问自身公网 IP 必超时**：京东云轻量机公网 IP 为 1:1 NAT 不绑网卡（见阶段二踩坑2），ArgoCD（京东云节点 pod）连 `https://117.72.69.23:7443` 永远 `i/o timeout`，宿主 curl 同样 HTTP 000。**结论：容器内组件互连一律走宿主内网 IP `172.16.0.3`**。
+2. **证书 SAN**：k3s-test 初始 `--tls-san 117.72.69.23` 不含内网 IP → 重建容器加 `--tls-san 172.16.0.3`（docker rm + run，数据卷全保留，CA 不变，客户端证书继续有效）。
+3. **ArgoCD 集群注册**：`cluster-k3s-test` secret 的 `server: https://172.16.0.3:7443`（内网 IP + 原生 TLS 客户端证书，非 insecure）。
+4. **本地管理面**：安全组仅放行 22（66.90.99.60 临时白名单），本地 kubectl 直连 7443 不通——**管理操作全部走 SSH**，远端 `KUBECONFIG=/root/k3s-test-local.yaml`（server 为 127.0.0.1:7443）。
+
+### Secret 与镜像
+
+- 不入 Git 的 secret 手动迁移（生产集群 get -o yaml | 测试集群 apply）：tripjournal-secrets / acr-pull-secret / itest-pg-secret。namespace 需先手动建（Application 均 `CreateNamespace=false`）。
+- **DATABASE_URL 踩坑**：secret 与 `base/api.yaml` wait-db 均写死跨 ns FQDN `postgres.tripjournal.svc`（阶段1 同集群恰好可达）→ 独立集群 ENOTFOUND。统一改**同 ns 短名 `postgres`**（cn/test 均同 ns 部署，等价）。
+- server-app 本地构建镜像：腾讯节点 containerd export tar → HTTP 18080 传输 → 京东云 `docker exec -i k3s-test ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import -`；nginx/postgres 走 `docker.1ms.run` 加速直拉；intelligent-test 走 ACR（acr-pull-secret）。
+
+### 测试集群差异 patch
+
+- StatefulSet/Deployment 调度 patch 全部移除（k3s-test 单节点无标签）；PG securityContext 置空**必须保留**（官方镜像 entrypoint 需 root 起，gosu 降权）——intelligentTest 曾误随调度 patch 一起删除导致 initdb chmod 失败 CrashLoop。
+- kustomize 对无 namespace 的 strategic merge patch 匹配过严，统一用 `- path: xxx.yaml` + `target: {kind, name}` 写法。
+- tripjournal test quota 从"防挤占生产"口径（limits 2C/2Gi）放宽为独立集群"防失控"口径（limits 3C/4Gi、requests 2C/2Gi、pods 16、pvc 4）——旧口径会拦死滚动 maxSurge。
+
+### 发布流与快照仓
+
+- test Application automated on：push Gitee main → webhook 秒级自动同步（Gitee→webhook-adapter→ArgoCD）。
+- **Gitee/GitHub 是脱敏快照仓**（与本地真实历史 no merge base）：推送用 `git worktree add <tmp> gitee/main` → 清空工作树 → rsync 本地内容（`--exclude ansible/inventory/hosts.ini --exclude terraform/plugins`）→ commit（消息加"（快照）"）→ `git push gitee HEAD:main` fast-forward。真实历史推京东云 `jdcloud` remote。
+- 生产集群旧 test namespace 暂保留观察；生产 app（tripjournal、intelligent-test×2）因 wait-db 修复/镜像 bump 呈 OutOfSync，automated off 待人工择机 sync。
+
 ## 10.7 遗留待办
 
 1. demo-app / intelligent-test 镜像侧改造（Dockerfile USER + 非特权端口）后补齐 runAsNonRoot。
