@@ -1,0 +1,13 @@
+# test PG：调度锁腾讯 + fsGroup 70（kubelet 自动 chown 卷，non-root PG initdb 不再 chmod 失败）
+# 注：base PG 为 Deployment（非 StatefulSet）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      nodeSelector:
+        cloud: tencent
+      securityContext:
+        fsGroup: 70
