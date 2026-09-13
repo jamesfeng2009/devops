@@ -14,7 +14,7 @@ spec:
     targetRevision: main
     path: k8s/overlays/test
   destination:
-    server: https://kubernetes.default.svc
+    server: https://117.72.69.23:7443 # k3s-test 独立测试集群（京东云宿主 docker 容器，阶段2）
     namespace: intelligent-test-test
   syncPolicy:
     automated:
