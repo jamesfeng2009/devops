@@ -12,3 +12,4 @@ patches:
   # 测试入口暴露：web NodePort 30090 / api NodePort 30091（base 为 ClusterIP）
   # 端口占用表：30080 argocd / 30081 demo / 30082 webhook / 30083-30084 itest / 30085 grafana
   - path: nodeport-patch.yaml
+  - path: schedule-patch.yaml
