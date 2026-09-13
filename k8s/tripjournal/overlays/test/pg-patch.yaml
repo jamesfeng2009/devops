@@ -1,0 +1,13 @@
+# test PG：置空 securityContext（与生产 cn/eu 一致：官方镜像 entrypoint 需 root 起，
+# gosu 降权跑 postgres uid 70。runAsNonRoot 对 PG 官方镜像不可行——见 devops.md 10.8 决策记录）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      securityContext: null
+      containers:
+        - name: postgres
+          securityContext: null

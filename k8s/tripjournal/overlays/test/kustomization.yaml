@@ -11,7 +11,8 @@ resources:
 patches:
   # 测试入口暴露：web NodePort 30090 / api NodePort 30091（base 为 ClusterIP）
   # 端口占用表：30080 argocd / 30081 demo / 30082 webhook / 30083-30084 itest / 30085 grafana
+  # 测试集群（k3s-test 单节点）无节点标签，不需要调度 patch；api 镜像 server-app 与 web 站点
+  # hostPath 由集群初始化脚本导入/同步到京东云宿主（见 devops.md 10.8）
   - path: nodeport-patch.yaml
-  - path: schedule-patch.yaml
-  - path: pg-fsgroup-patch.yaml
+  - path: pg-patch.yaml
   - path: replicas-patch.yaml
