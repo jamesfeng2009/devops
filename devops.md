@@ -380,7 +380,40 @@ kubectl wait -n tripjournal deploy/postgres --for=condition=available --timeout=
 
 操作路径：腾讯云控制台 → 轻量应用服务器/CVM → 防火墙（或安全组）→ 找到 30443 与 30085 的允许规则 → 修改来源为上述两个 /32 IP → 保存。完成后验证：办公网 `https://124.221.136.117:30443` 可达、外网（如手机热点）应超时；Gatus-eu（阿里云 IP 源）对 30443 的探测持续正常。
 
-## 10.6 遗留待办
+## 10.6 新项目傻瓜式接入指引（reusable workflow，2026-09-13 落地）
+
+流水线模板已抽为可复用 workflow：`duonera/intelligentTest/.github/workflows/build-deploy.yml`（同仓薄壳引用，规避私有仓跨 owner 不可见限制）。首次运行已验证全链路（构建→ACR→bump→双推→ArgoCD 双环境同步）。
+
+**项目侧（一次性）：**
+
+1. 从 intelligentTest 复制 `.github/workflows/ci.yml` 薄壳，改 4 个参数：
+
+```yaml
+jobs:
+  build-and-deploy:
+    uses: duonera/intelligentTest/.github/workflows/build-deploy.yml@main
+    with:
+      app_name: <镜像名，需与清单 image 后缀一致>
+      dockerfile_dir: <Dockerfile 所在目录>
+      manifest_path: k8s/base/deployment.yaml
+      gitee_repo: <Gitee 镜像仓名>
+    secrets: inherit
+```
+
+2. 复制 `k8s/` Kustomize 清单（base + overlays/<env>），改镜像名/端口/NodePort
+3. GitHub Secrets 配置（与 intelligentTest 相同六个）：`ACR_NAMESPACE / ACR_USERNAME / ACR_PASSWORD / GITEE_USERNAME / GITEE_TOKEN`（模板按名引用）
+4. Gitee API 创建私有镜像仓
+5. 容器适配：非特权端口（>1024）、镜像内置普通用户或 manifest 指定 runAsUser、只读根挂 emptyDir、带 PG 先 chown 数据卷（Runbook C）
+
+**平台侧（10 分钟）：**
+
+1. 复制 `k8s/apps/intelligenttest-app.yaml` → 改 `repoURL` / `path` / `namespace`
+2. `kubeseal` 密封新 Gitee 仓凭证 → `sealed-gitee-<name>.yaml`
+3. `k8s/apps/kustomization.yaml` 加一行 → push devops 仓
+
+**日常发布 = push main，零手工。** 流水线模板升级只需改 build-deploy.yml 一处，全部引用项目生效。
+
+## 10.7 遗留待办
 
 1. demo-app / intelligent-test 镜像侧改造（Dockerfile USER + 非特权端口）后补齐 runAsNonRoot。
 2. intelligent-test 两个环境的 PG 数据卷 chown 999（Runbook C），配合该仓 `k8s/base/postgres.yaml` 加固提交一起生效。
