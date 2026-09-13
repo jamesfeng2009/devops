@@ -1,7 +1,14 @@
-# test 环境 web 单副本（prod 双副本高可用在 base 定义，测试环境无必要，省资源给滚动峰值）
+# test 环境单副本（prod 高可用双副本在 base 定义，测试环境无必要，省资源给滚动峰值）
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tripjournal-web
+spec:
+  replicas: 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trip-ledger-api
 spec:
   replicas: 1
