@@ -1,4 +1,4 @@
-# 测试环境资源保护：限总量防挤占生产（2C/1.8-2G 小规格节点）
+# 测试环境资源保护（阶段2 起跑在 k3s-test 独立集群，不再挤占生产；保留 quota 防失控）
 # 注意：requests.memory 须 ≥ 全部 Pod 请求之和 + 滚动期 maxSurge 峰值，否则滚动永久卡死
 apiVersion: v1
 kind: ResourceQuota
@@ -6,9 +6,9 @@ metadata:
   name: test-quota
 spec:
   hard:
-    requests.cpu: "1"
-    requests.memory: 1Gi
-    limits.cpu: "2"
-    limits.memory: 2Gi
-    pods: "12"
-    persistentvolumeclaims: "2"
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "3"
+    limits.memory: 4Gi
+    pods: "16"
+    persistentvolumeclaims: "4"
