@@ -18,8 +18,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: intelligent-test-cn
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
+    # prod 发布受控：CI bump base 后只标 OutOfSync，验收 test 后在 ArgoCD UI 手动 Sync（回滚=Sync 历史版本）
+    automated: null
     syncOptions:
       - CreateNamespace=true

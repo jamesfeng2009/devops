@@ -1,0 +1,24 @@
+# intelligent-test 测试环境（阶段1 同集群 intelligent-test-test namespace；阶段2 迁独立测试集群）
+# 发布流：CI bump base tag 自动同步（test 永远追踪最新镜像）
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: intelligent-test-test
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitee.com/jamesfeng_2009/intelligentTest.git
+    targetRevision: main
+    path: k8s/overlays/test
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: intelligent-test-test
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

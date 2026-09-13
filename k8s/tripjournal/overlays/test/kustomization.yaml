@@ -1,0 +1,14 @@
+# test overlay：测试环境（阶段1 同集群 namespace 隔离；阶段2 独立测试集群就绪后整体迁移）
+# 发布流：CI/Git 变更自动同步（automated on）——测试环境永远追踪最新 main
+# 前置（一次性，手动 apply，不入 Git）：
+#   kubectl -n tripjournal-test apply -f secret（tripjournal-secrets：POSTGRES_USER/PASSWORD/DB 同名同结构）
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tripjournal-test
+resources:
+  - ../../base
+  - resource-quota.yaml
+patches:
+  # 测试入口暴露：web NodePort 30090 / api NodePort 30091（base 为 ClusterIP）
+  # 端口占用表：30080 argocd / 30081 demo / 30082 webhook / 30083-30084 itest / 30085 grafana
+  - path: nodeport-patch.yaml

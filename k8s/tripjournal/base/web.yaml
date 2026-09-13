@@ -28,7 +28,14 @@ kind: Deployment
 metadata:
   name: tripjournal-web
 spec:
-  replicas: 1
+  replicas: 2
+  # 零中断滚动：与 api.yaml 同策略，新副本 Ready 并稳定 30s 后才杀旧副本
+  minReadySeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: tripjournal-web
@@ -39,7 +46,8 @@ spec:
     spec:
       containers:
         - name: web
-          image: nginx:alpine
+          # 版本 pin：与原 nginx:alpine 同一构建（digest 1b595815db669 已在节点预拉验证）
+          image: nginx:1.31.5-alpine
           imagePullPolicy: IfNotPresent
           # 安全加固：nginx 官方镜像内置 nginx 用户(101)，端口 8080 非特权
           securityContext:
@@ -63,6 +71,12 @@ spec:
               mountPath: /run
           ports:
             - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               cpu: 50m

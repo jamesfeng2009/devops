@@ -4,7 +4,15 @@ kind: Deployment
 metadata:
   name: trip-ledger-api
 spec:
-  replicas: 1
+  replicas: 2
+  # 零中断滚动：新副本 Ready 并稳定 30s 后才杀旧副本（2026-09-13 事故复盘：
+  # 单副本滚动期间新 Pod BackOff、旧 Pod 已被杀，对外零可用约 16 分钟）
+  minReadySeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: trip-ledger-api

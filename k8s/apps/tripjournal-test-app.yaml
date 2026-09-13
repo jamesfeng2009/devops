@@ -1,8 +1,9 @@
-# 业务应用：tripjournal（国内层）Git→集群自动同步（源：Gitee 私有镜像仓，与控制面解耦）
+# tripjournal 测试环境（阶段1 同集群 tripjournal-test namespace；阶段2 迁独立测试集群）
+# 发布流：Git 变更自动同步（test 永远追踪 main 最新，含镜像内容不变时的清单变更）
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: tripjournal
+  name: tripjournal-test
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -11,12 +12,13 @@ spec:
   source:
     repoURL: https://gitee.com/jamesfeng_2009/devops.git
     targetRevision: main
-    path: k8s/tripjournal/overlays/cn
+    path: k8s/tripjournal/overlays/test
   destination:
     server: https://kubernetes.default.svc
-    namespace: tripjournal
+    namespace: tripjournal-test
   syncPolicy:
-    # prod 发布受控：CI/Git 变更只标 OutOfSync，验收 test 后在 ArgoCD UI 手动 Sync（回滚=Sync 历史版本）
-    automated: null
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=false

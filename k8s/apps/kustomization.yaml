@@ -6,10 +6,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - tripjournal-app.yaml
+  - tripjournal-test-app.yaml
   - argocd-apps-app.yaml
   - demo-app-app.yaml
   - intelligenttest-app.yaml
   - intelligenttest-cn-app.yaml
+  - intelligenttest-test-app.yaml
   - monitoring-app.yaml
   - sealed-gitee-tripjournal.yaml
   - sealed-gitee-devops.yaml

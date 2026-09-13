@@ -1,0 +1,13 @@
+# 测试环境资源保护：限总量防挤占生产（节点为 2C/1.8-2G 小规格）
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: test-quota
+spec:
+  hard:
+    requests.cpu: "500m"
+    requests.memory: 512Mi
+    limits.cpu: "1"
+    limits.memory: 1Gi
+    pods: "10"
+    persistentvolumeclaims: "2"
