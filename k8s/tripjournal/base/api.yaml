@@ -27,7 +27,9 @@ spec:
         - name: wait-db
           image: postgres:16-alpine
           imagePullPolicy: IfNotPresent
-          command: ["sh", "-c", "until pg_isready -h postgres.tripjournal.svc.cluster.local -p 5432 -t 3; do echo 'waiting for postgres'; sleep 3; done"]
+          # 同 ns 短名解析（cn: tripjournal / test: tripjournal-test，PG 均与 api 同 ns）；
+          # 不要写死跨 ns FQDN——test 独立集群里没有 tripjournal ns 的 svc
+          command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -t 3; do echo 'waiting for postgres'; sleep 3; done"]
           resources:
             requests:
               cpu: 10m
